@@ -1,0 +1,56 @@
+SELECT report_date,
+       frequency_latest,
+       n_month_latest,
+       n_month_first,
+       COUNT(*)- COUNTIF(type='converter') AS prospect,
+       COUNTIF(type='converter') AS converter
+--        IEEE_DIVIDE(COUNTIF(type='converter'), COUNT(*)) AS conv_rate
+FROM (
+  SELECT report_date,
+         email,
+--          MAX(order_date_1st) AS order_date_1st,
+--          MAX(order_date_latest) AS order_date_latest,
+         MAX(frequency_latest) AS frequency_latest,
+         MAX(n_month_latest) AS n_month_latest,
+         MAX(n_month_first) AS n_month_first,
+         MAX(type) AS type
+  FROM (
+    SELECT *,
+           DATE_DIFF(report_date, order_date_latest, MONTH) AS n_month_latest,
+           DATE_DIFF(report_date, order_date_1st, MONTH) AS n_month_first,
+           CASE WHEN order_date_trunc = report_date THEN 'converter' ELSE NULL END AS type
+    FROM (
+      SELECT  report_date,
+              order_num,
+              order_date_trunc,
+              email,
+              rn,
+              CASE WHEN rn=1 THEN order_date_trunc ELSE NULL END AS order_date_1st,
+              MAX(CASE WHEN order_date_trunc < report_date THEN order_date_trunc ELSE NULL END) OVER (PARTITION BY report_date,email) AS order_date_latest,   
+              COUNTIF(order_date_trunc < report_date) OVER (PARTITION BY report_date,email) AS frequency_latest          
+      FROM  (
+         SELECT *
+         FROM  UNNEST (
+            (SELECT GENERATE_DATE_ARRAY ((SELECT CAST(MIN(TIMESTAMP_TRUNC(order_date,MONTH)) AS DATE) FROM ds_tutorial.tb_ec_retention),
+                                         (SELECT CAST(MAX(TIMESTAMP_TRUNC(order_date,MONTH)) AS DATE) FROM ds_tutorial.tb_ec_retention),
+                                         INTERVAL 1 MONTH)) ) AS report_date
+         ) AS date_series
+      CROSS JOIN (
+        SELECT order_num,
+             order_date,
+             CAST (TIMESTAMP_TRUNC(order_date,MONTH) AS DATE) AS order_date_trunc,
+             email,
+             ROW_NUMBER() OVER (PARTITION BY email ORDER BY order_date) AS rn
+        FROM ds_tutorial.tb_ec_retention
+        GROUP BY 1,2,3,4
+        ) AS data_core
+       ) sub
+    WHERE order_date_trunc <= report_Date AND
+          order_date_latest >= DATE_ADD(report_date, INTERVAL -12 MONTH)
+    ORDER BY 1,4,3,5
+    ) sub2
+  GROUP BY 1,2
+--   ORDER BY 1,3,4
+  ) sub3
+GROUP BY 1,2,3,4
+ORDER BY 1,2,3,4
